@@ -56,58 +56,84 @@ mes_sap = get_sap_month(hoy)
 
 
 def main():
-    df_facturas = pd.read_excel(
-        r"D:\Revisar juan\Bolivia\PythonOtros\CompSap\PREREGISTRO.xlsx"
-    )
-    df_facturas = df_facturas.iloc[:-2]
-    df_factura = df_facturas[
-        df_facturas["Factura"].notnull() & (df_facturas["Factura"] != "")
-    ]
-    df_factura.to_excel(
-        r"D:\Revisar juan\Bolivia\PythonOtros\CompSap\FACTURA.xlsx", index=False
-    )
-    df_pedido = df_facturas[
-        df_facturas["Factura"].isnull() | (df_facturas["Factura"] == "")
-    ]
-    df_pedido.to_excel(
-        r"D:\Revisar juan\Bolivia\PythonOtros\CompSap\PEDIDO.xlsx", index=False
-    )
+    # Define configurable paths
+    BASE_PATH = os.getenv('SAP_COMP_PATH', r"D:\Revisar juan\Bolivia\PythonOtros\CompSap")
+    PREREGISTRO_FILE = os.path.join(BASE_PATH, "PREREGISTRO.xlsx")
+    FACTURA_FILE = os.path.join(BASE_PATH, "FACTURA.xlsx")
+    PEDIDO_FILE = os.path.join(BASE_PATH, "PEDIDO.xlsx")
+    BANCO_FILE = os.path.join(BASE_PATH, "BANCO.xlsx")
+    
+    # Validate file existence
+    if not os.path.exists(PREREGISTRO_FILE):
+        raise FileNotFoundError(f"Required file not found: {PREREGISTRO_FILE}")
+    
+    try:
+        df_facturas = pd.read_excel(PREREGISTRO_FILE)
+        df_facturas = df_facturas.iloc[:-2]
+        
+        # More efficient DataFrame filtering using boolean indexing
+        factura_mask = df_facturas["Factura"].notna() & (df_facturas["Factura"] != "")
+        df_factura = df_facturas[factura_mask].copy()  # Use copy() to avoid SettingWithCopyWarning
+        df_pedido = df_facturas[~factura_mask].copy()  # Use negation of mask for efficiency
+        
+        # Write DataFrames to Excel files
+        df_factura.to_excel(FACTURA_FILE, index=False)
+        df_pedido.to_excel(PEDIDO_FILE, index=False)
+    except Exception as e:
+        raise Exception(f"Error processing PREREGISTRO file: {str(e)}")
 
-    df_banco = pd.read_excel(
-        r"D:\Revisar juan\Bolivia\PythonOtros\CompSap\BANCO.xlsx", header=4
-    )
-    df_factura = pd.read_excel(
-        r"D:\Revisar juan\Bolivia\PythonOtros\CompSap\FACTURA.xlsx",
-        dtype={
-            "Cliente": str,
-            # "Número Pedido": str,
-            # "Factura": str,
-        },
-    )
-    df_pedido = pd.read_excel(
-        r"D:\Revisar juan\Bolivia\PythonOtros\CompSap\PEDIDO.xlsx",
-        dtype={
-            "Cliente": str,
-            "Territorio": str,
-            "Número Pedido": str,
-            # "Factura": str,
-        },
-    )
+    try:
+        df_banco = pd.read_excel(BANCO_FILE, header=4)
+        df_factura = pd.read_excel(FACTURA_FILE,
+            dtype={
+                "Cliente": str,
+                # "Número Pedido": str,
+                # "Factura": str,
+            },
+        )
+        df_pedido = pd.read_excel(PEDIDO_FILE,
+            dtype={
+                "Cliente": str,
+                "Territorio": str,
+                "Número Pedido": str,
+                # "Factura": str,
+            },
+        )
+    except Exception as e:
+        raise Exception(f"Error reading Excel files: {str(e)}")
 
     # --- OBTENER FECHA Y TERRITORIO ---
-    fecha = str(df_banco.iloc[0]["FECHA"])
-    redondeo = float(df_banco.iloc[0]["REDONDEO"])
-    territorio = str(int(df_factura.iloc[0]["Territorio"]))
+    try:
+        fecha = str(df_banco.iloc[0]["FECHA"])
+        redondeo = float(df_banco.iloc[0]["REDONDEO"]) if pd.notna(df_banco.iloc[0]["REDONDEO"]) else 0.0
+        # Fix: Add validation for territorio conversion
+        territorio_raw = df_factura.iloc[0]["Territorio"]
+        if pd.isna(territorio_raw):
+            raise ValueError("Territorio value is missing")
+        territorio = str(int(float(territorio_raw)))
+    except (ValueError, IndexError) as e:
+        raise Exception(f"Error extracting data from Excel files: {str(e)}")
 
     # --- LEER USUARIO Y CONTRASEÑA ---
-    excel_app = win32com.client.Dispatch("Excel.Application")
-    workbook = excel_app.Workbooks.Open(
-        r"D:\Revisar juan\Bolivia\PythonOtros\CompSap\BANCO.xlsx"
-    )
-    sheet = workbook.Sheets("Hoja")
-    user = sheet.Range("C2").Value
-    key = sheet.Range("C3").Value
-    workbook.Close(SaveChanges=False)
+    excel_app = None
+    try:
+        excel_app = win32com.client.Dispatch("Excel.Application")
+        excel_app.Visible = False  # Hide Excel application
+        workbook = excel_app.Workbooks.Open(BANCO_FILE)
+        sheet = workbook.Sheets("Hoja")
+        user = sheet.Range("C2").Value
+        key = sheet.Range("C3").Value
+        
+        # Validate credentials
+        if not user or not key:
+            raise ValueError("Username or password is empty")
+        
+        workbook.Close(SaveChanges=False)
+    except Exception as e:
+        raise Exception(f"Error reading credentials: {str(e)}")
+    finally:
+        if excel_app:
+            excel_app.Quit()
 
     # --- LOGIN AUTOMÁTICO EN SAP ---
     session.findById("wnd[0]").maximize()
@@ -128,11 +154,14 @@ def main():
     session.findById("wnd[0]/usr/txtBKPF-BKTXT").text = f"COBRANZAS DUAL-{territorio}"
 
     # --- PARTIDAS DE BANCO ---
+    last_nro_operacion = ""  # Initialize to handle case where no records exist
     for _, fila in df_banco.iterrows():
         banco = str(fila["CUENTA"])
         importes = str(fila["IMPORTE"])
         nro_operacion = str(fila["NRO.OPERACION"])
-        fecha = str(fila["FECHA"])
+        fecha_banco = str(fila["FECHA"])  # Don't overwrite the main fecha variable
+        last_nro_operacion = nro_operacion  # Keep track of last operation number
+        
         session.findById("wnd[0]/usr/ctxtRF05A-NEWBS").text = "40"
         session.findById("wnd[0]/usr/ctxtRF05A-NEWKO").text = banco
         session.findById("wnd[0]/usr/ctxtRF05A-NEWKO").setFocus()
@@ -141,8 +170,10 @@ def main():
         session.findById("wnd[0]/usr/txtBSEG-WRBTR").text = importes
         session.findById("wnd[0]/usr/ctxtBSEG-SGTXT").text = nro_operacion
 
-    session.findById("wnd[0]/usr/ctxtBSEG-SGTXT").setFocus()
-    session.findById("wnd[0]/usr/ctxtBSEG-SGTXT").caretPosition = len(nro_operacion)
+    # Only set focus if we have at least one record
+    if last_nro_operacion:
+        session.findById("wnd[0]/usr/ctxtBSEG-SGTXT").setFocus()
+        session.findById("wnd[0]/usr/ctxtBSEG-SGTXT").caretPosition = len(last_nro_operacion)
     # session.findById("wnd[0]/tbar[1]/btn[14]").press()
 
     # --- PARTIDAS DE PEDIDO ---
@@ -205,14 +236,15 @@ def main():
     session.findById("wnd[0]/tbar[1]/btn[14]").press()
 
     # ---REDONDEO DE LA OPERACIÓN---
-    if not (redondeo == 0 or redondeo == "" or redondeo is None or np.isnan(redondeo)):
+    # Simplified and more efficient redondeo logic
+    if abs(redondeo) > 0.01:  # Use a small threshold to avoid floating point precision issues
         valor = abs(redondeo)
-        valor_str = "{:.2f}".format(valor)
-        if redondeo > 0:
-            session.findById("wnd[0]/usr/ctxtRF05A-NEWBS").text = "50"
-        else:
-            session.findById("wnd[0]/usr/ctxtRF05A-NEWBS").text = "40"
-
+        valor_str = f"{valor:.2f}"  # More efficient string formatting
+        
+        # Use positive value for credit (50) and negative for debit (40)
+        newbs_code = "50" if redondeo > 0 else "40"
+        session.findById("wnd[0]/usr/ctxtRF05A-NEWBS").text = newbs_code
+        
         session.findById("wnd[0]/usr/ctxtRF05A-NEWKO").text = "659310999"
         session.findById("wnd[0]/usr/ctxtRF05A-NEWKO").setFocus()
         session.findById("wnd[0]/usr/ctxtRF05A-NEWKO").caretPosition = 9
