@@ -7,7 +7,7 @@ import datetime
 import os
 
 
-# --- FUNCIONES AUXILIARES2 ---
+# --- FUNCIONES AUXILIARES ---
 
 
 def wait_for_app(app_name, timeout=120):
@@ -229,9 +229,3 @@ if __name__ == "__main__":
     main()
 
 print("Operación completada correctamente")
-print ("ok")
-print ("jc")
-<<<<<<< HEAD
-=======
-print ("jc2")
->>>>>>> 9da1e94 (Actualizar comp.py)
