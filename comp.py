@@ -231,3 +231,7 @@ if __name__ == "__main__":
 print("Operación completada correctamente")
 print ("ok")
 print ("jc")
+<<<<<<< HEAD
+=======
+print ("jc2")
+>>>>>>> 9da1e94 (Actualizar comp.py)
