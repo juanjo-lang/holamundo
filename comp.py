@@ -227,3 +227,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+print("Operación completada correctamente")
+print ("ok")
+print ("jc")
