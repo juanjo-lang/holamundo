@@ -7,7 +7,7 @@ import datetime
 import os
 
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES AUXILIARES2 ---
 
 
 def wait_for_app(app_name, timeout=120):
